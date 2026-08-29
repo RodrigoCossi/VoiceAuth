@@ -1,0 +1,17 @@
+services:
+  voice-auth:
+    build: .
+    restart: always
+    env_file: .env
+    # host networking so `localhost` in AGENT_API_URL reaches a backend
+    # running on the same machine (e.g. a local agent gateway). Switch to a
+    # bridge network + service DNS name if your backend runs in its own
+    # container instead.
+    network_mode: host
+    volumes:
+      - ./data:/app/data   # persists voiceprint, DB, model cache, PIN hash, logs
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"

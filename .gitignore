@@ -1,0 +1,18 @@
+# Secrets / local config
+.env
+
+# Runtime data — voiceprints, PIN hash, passphrase, logs, model cache, DB
+data/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/

@@ -1,0 +1,15 @@
+[Unit]
+Description=VoiceAuth Telegram Gateway
+After=network.target
+
+[Service]
+Type=simple
+User=voiceauth
+WorkingDirectory=/opt/voiceauth
+ExecStart=/opt/voiceauth/venv/bin/python main.py
+Restart=always
+RestartSec=5
+EnvironmentFile=/opt/voiceauth/.env
+
+[Install]
+WantedBy=multi-user.target
