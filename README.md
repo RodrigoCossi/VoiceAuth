@@ -32,15 +32,18 @@ flowchart LR
         direction TB
         G1{"Gate 1\nuser-ID allow-list"}
         G2{"Gate 2\nactive session?"}
-        G3{"Gate 3\nvoice biometric\n+ passphrase, or PIN"}
+        G3a{"Gate 3a\nPIN"}
+        G3b{"Gate 3b\nvoice biometric\n+ passphrase"}
         G1 -->|allowed| G2
-        G2 -->|no session| G3
+        G2 -->|no session| G3a
+        G3a -->|correct, 5 min window| G3b
     end
 
     MW --> G1
     G1 -->|blocked| DENY["⛔ generic denial\n+ push alert\n(reveals nothing)"]
-    G3 -->|fail| DENY2["⛔ logged\n+ escalating alert"]
-    G3 -->|pass| SESSION["Session opened\n(in-memory, TTL)"]
+    G3a -->|wrong| DENY2["⛔ logged\n+ escalating alert"]
+    G3b -->|fail or no PIN first| DENY2
+    G3b -->|pass| SESSION["Session opened\n(in-memory, TTL)"]
     G2 -->|active session| FWD
     SESSION --> FWD["Forward as text"]
 
@@ -63,12 +66,16 @@ never talks to Telegram directly and never sees anything unauthenticated.
 |---|---|---|
 | **1 — Identity** | Telegram `user_id` against a single-user allow-list, checked first, always | Anyone who isn't you, before they see a single byte of bot behavior |
 | **2 — Session** | In-memory session with a sliding inactivity timeout (default 30 min) | Re-authenticating on every message once you're already in |
-| **3 — Biometrics** | SpeechBrain **ECAPA-TDNN** speaker embedding (cosine similarity) **and** a spoken passphrase (transcribed locally, fuzzy-matched), with a bcrypt-hashed **PIN** as a fallback | Voice message replay, wrong speaker, guessed/leaked PIN |
+| **3a — PIN** | A bcrypt-hashed **PIN**, rate-limited, entered first | Anyone who doesn't know the PIN never even gets a chance at Gate 3b |
+| **3b — Biometrics** | SpeechBrain **ECAPA-TDNN** speaker embedding (cosine similarity) **and** a spoken passphrase (transcribed locally, fuzzy-matched) | Voice message replay, wrong speaker, a stolen/guessed PIN used alone |
 
-Gate 3 requires **both** the voiceprint match and the passphrase match — a
-recording of your voice saying something else, or someone else saying your
-passphrase, both fail independently. A PIN fallback exists for when speaking
-isn't practical (public place, sore throat, noisy environment).
+Gate 3 is two factors in sequence, both required — not either/or. A correct
+PIN doesn't open a session by itself: it only unlocks a short window (5
+minutes) in which a matching voice note can complete the login. If no voice
+note arrives in time, the window closes and the PIN must be entered again.
+Within Gate 3b, the voiceprint match and the passphrase match are themselves
+independent checks — a recording of your voice saying something else, or
+someone else saying your passphrase, both fail on their own.
 
 A few deliberate design choices worth calling out:
 
@@ -100,18 +107,30 @@ sequenceDiagram
     participant MW as VoiceAuth middleware
     participant Backend as Agent backend
 
-    You->>Telegram: voice note (passphrase)
+    You->>Telegram: /pin, then the PIN
     Telegram->>MW: polled update
     MW->>MW: Gate 1 — user_id allow-list ✅
     MW->>MW: Gate 2 — no active session
-    MW->>MW: Gate 3 — ECAPA-TDNN similarity + passphrase fuzzy-match
-    alt both checks pass
-        MW->>MW: open session, delete auth message
-        MW-->>Telegram: "🔓 Session started."
-        MW->>Telegram: setMyCommands (unlocked menu)
-    else either check fails
-        MW-->>Telegram: "⛔ Voice authentication failed."
-        MW->>MW: push alert via ntfy
+    MW->>MW: Gate 3a — PIN correct
+    MW-->>Telegram: "PIN accepted — send your voice note."
+    MW->>MW: opens a 5-minute window
+
+    You->>Telegram: voice note (passphrase)
+    Telegram->>MW: polled update
+    MW->>MW: Gate 3b — PIN window still open?
+    alt window expired or no PIN step done
+        MW-->>Telegram: "Enter your PIN first."
+        MW->>MW: not counted as a failed attempt
+    else window open
+        MW->>MW: ECAPA-TDNN similarity + passphrase fuzzy-match
+        alt both checks pass
+            MW->>MW: open session, delete auth message
+            MW-->>Telegram: "🔓 Session started."
+            MW->>Telegram: setMyCommands (unlocked menu)
+        else either check fails
+            MW-->>Telegram: "⛔ Voice authentication failed."
+            MW->>MW: push alert via ntfy
+        end
     end
 
     You->>Telegram: any message (session active)
@@ -133,8 +152,10 @@ sequenceDiagram
 - **Local transcription** — `faster-whisper` (`base`, int8) for both the
   passphrase check and forwarding voice messages as text to the backend.
   No audio ever leaves the machine for STT.
-- **PIN fallback** — bcrypt-hashed, rate-limited (3 attempts / 15 min), 60s
-  entry timeout, prompt + reply auto-deleted from the chat.
+- **PIN as the required first factor** — bcrypt-hashed, rate-limited (3
+  attempts / 15 min), 60s entry timeout, prompt + reply auto-deleted from the
+  chat. A correct PIN opens a 5-minute window for the voice step; it does not
+  open a session on its own.
 - **Session-aware command menu** — Telegram's native "/" autocomplete
   reflects locked/unlocked state per chat, via `BotCommandScopeChat`.
 - **Push notifications** — unknown-user attempts, failed voice auth (with
@@ -208,7 +229,7 @@ chmod 600 .env
 # edit .env — bot token, your user ID, agent backend URL/key, ntfy topic
 ```
 
-### Set up the PIN fallback
+### Set up the PIN
 
 ```bash
 docker compose run --rm voice-auth python setup_pin.py
@@ -277,7 +298,7 @@ scores your own voice actually produces before adjusting either.
 | Command | Requires session | Description |
 |---|---|---|
 | `/enroll` | No | Enroll voiceprint (only if not already enrolled) |
-| `/pin` | No | Authenticate with PIN (message auto-deleted) |
+| `/pin` | No | Enter the PIN — first factor, opens a 5-minute window for the voice step (message auto-deleted) |
 | `/lock` | No | End the session immediately |
 | `/status` | Yes | Enrollment state, session time remaining, failed-attempt count |
 | `/help` | Yes | Command list |
@@ -308,9 +329,12 @@ consider for a v2:
   public HTTPS endpoint and update-signature verification.
 - **Cloudflare Tunnel (or similar) for that public endpoint**, so the webhook
   variant above doesn't require opening an inbound port on the host at all.
-- **An additional factor beyond voice/PIN** — WebAuthn/FIDO2 (a phone's
-  fingerprint or platform authenticator) as a stronger alternative to the PIN
-  fallback, for a true multi-factor combination.
+- **An additional factor alongside voice** — WebAuthn/FIDO2 (a phone's
+  fingerprint or platform authenticator) as an alternative to the voice step,
+  with the PIN always required: PIN + fingerprint, or PIN + voice. Investigated
+  but not yet built — it needs the middleware's first public inbound HTTPS
+  endpoint (today it's pure long-polling), since the biometric ceremony can't
+  run on the host itself.
 - **Multi-user support** — the allow-list and voiceprint are currently
   single-user by design (it's a personal-assistant gateway); a multi-tenant
   version would need per-user voiceprints, sessions, and rate limits.
