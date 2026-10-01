@@ -42,7 +42,8 @@ flowchart LR
     MW --> G1
     G1 -->|blocked| DENY["⛔ generic denial\n+ push alert\n(reveals nothing)"]
     G3a -->|wrong| DENY2["⛔ logged\n+ escalating alert"]
-    G3b -->|fail or no PIN first| DENY2
+    G3b -->|fail| DENY2
+    G3b -->|no PIN window open| ASKPIN["🔑 asks for /pin\n(not a failed attempt)"]
     G3b -->|pass| SESSION["Session opened\n(in-memory, TTL)"]
     G2 -->|active session| FWD
     SESSION --> FWD["Forward as text"]
