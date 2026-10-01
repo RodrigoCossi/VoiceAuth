@@ -1,10 +1,8 @@
 # VoiceAuth
 
-**A voice-biometric authentication gateway that sits in front of a Telegram bot.**
+**A multi-factor voice-biometric authentication gateway that sits in front of a Telegram bot.**
 
-Every message — voice, text, photo, document — is intercepted before it reaches
-your bot's actual logic. Nothing gets through until the person on the other end
-proves, by voice, that they're allowed in.
+Every message — voice, text, photo, or document — is intercepted before it reaches your bot’s logic. Nothing passes through until the user proves, by ID → PIN → voice biometrics → spoken passphrase, that they’re authorized to enter.
 
 > **Portfolio note:** this is a sanitized, generic showcase of an authentication
 > middleware I built and run in production for my own Telegram-connected AI
