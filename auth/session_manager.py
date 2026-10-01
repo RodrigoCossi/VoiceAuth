@@ -21,7 +21,7 @@ class Session:
     chat_id: int
     started_at: datetime
     expires_at: datetime
-    auth_method: str  # 'voice' or 'pin'
+    auth_method: str  # always 'pin+voice' — both factors are required to reach here
     warning_sent: bool = False
 
 

@@ -59,12 +59,13 @@ def _reset_fail(chat_id: int) -> None:
 
 
 class VoiceHandler:
-    def __init__(self, config, verifier, enrollment, session_manager,
+    def __init__(self, config, verifier, enrollment, session_manager, pin,
                  anti_replay, db, notifier, forwarder, tts) -> None:
         self._cfg = config
         self._verifier = verifier
         self._enroll = enrollment
         self._sessions = session_manager
+        self._pin = pin
         self._replay = anti_replay
         self._db = db
         self._notifier = notifier
@@ -168,10 +169,25 @@ class VoiceHandler:
                 logger.warning("Voice auth: transcription failed, treating passphrase as unmatched")
 
             if similarity >= self._cfg.similarity_threshold and passphrase_ok:
-                # SUCCESS — voice biometric and passphrase both verified
+                # Voice biometric and passphrase both verified — this is still only the
+                # second factor. The PIN must already have been accepted via /pin, or
+                # there is no session yet.
                 self._replay.register(audio_hash)
                 _reset_fail(chat_id)
-                self._sessions.create(user.id, chat_id, "voice")
+                if not self._pin.has_pin_verified(user.id):
+                    await self._db.log(
+                        telegram_user_id=user.id, telegram_username=user.username,
+                        chat_id=chat_id, result="VOICE_OK_PIN_MISSING",
+                        similarity_score=similarity, audio_hash=audio_hash,
+                    )
+                    await context.bot.send_message(
+                        chat_id,
+                        "🔑 Voice verified, but the PIN step is still missing. "
+                        "Send /pin first, then repeat the voice message.",
+                    )
+                    return
+                self._pin.consume_pin_verified(user.id)
+                self._sessions.create(user.id, chat_id, "pin+voice")
                 await self._db.log(
                     telegram_user_id=user.id, telegram_username=user.username,
                     chat_id=chat_id, result="PASS", similarity_score=similarity,

@@ -1,7 +1,11 @@
-"""PIN fallback authentication.
+"""PIN authentication — first factor of the two-factor gate (PIN, then voice).
 
 State machine per user_id:
-  idle → waiting_for_pin (60 s timeout) → idle
+  idle → waiting_for_pin (60 s timeout) → pin_verified (5 min TTL) → idle
+
+A correct PIN does not start a session by itself; it only unlocks the voice
+step. `pin_verified` is consumed the moment voice authentication succeeds, or
+it simply expires if no voice message follows in time.
 
 Rate limit: max 3 attempts per 15 minutes per user.
 """
@@ -21,6 +25,7 @@ logger = logging.getLogger(__name__)
 _RATE_WINDOW = timedelta(minutes=15)
 _RATE_MAX = 3
 _PIN_TIMEOUT = timedelta(seconds=60)
+_PIN_VERIFIED_TTL = timedelta(minutes=5)
 
 
 @dataclass
@@ -49,6 +54,7 @@ class PinAuth:
         self._path = pin_hash_path
         self._pending: dict[int, _PinState] = {}
         self._rate: dict[int, _RateEntry] = {}
+        self._pin_verified: dict[int, datetime] = {}
 
     # ── Hash helpers ──────────────────────────────────────────────────────────
 
@@ -116,3 +122,20 @@ class PinAuth:
                 result.append((uid, state.prompt_message_id))
                 del self._pending[uid]
         return result
+
+    # ── PIN-verified state (first factor, waiting on voice) ─────────────────────
+
+    def mark_pin_verified(self, user_id: int) -> None:
+        self._pin_verified[user_id] = datetime.now(timezone.utc) + _PIN_VERIFIED_TTL
+
+    def has_pin_verified(self, user_id: int) -> bool:
+        expires = self._pin_verified.get(user_id)
+        if expires is None:
+            return False
+        if datetime.now(timezone.utc) >= expires:
+            self._pin_verified.pop(user_id, None)
+            return False
+        return True
+
+    def consume_pin_verified(self, user_id: int) -> None:
+        self._pin_verified.pop(user_id, None)
