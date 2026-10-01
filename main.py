@@ -254,13 +254,15 @@ async def _handle_pin_input(
 
     if pin.verify_pin(entered_pin):
         pin.reset_rate(user.id)
-        sessions.create(user.id, msg.chat_id, "pin")
+        pin.mark_pin_verified(user.id)
         await db.log(
             telegram_user_id=user.id, telegram_username=user.username,
-            chat_id=msg.chat_id, result="PASS",
+            chat_id=msg.chat_id, result="PIN_OK",
         )
-        await context.bot.send_message(msg.chat_id, "🔓 Auth accepted. Session started.")
-        await set_command_menu(context.bot, msg.chat_id, authenticated=True)
+        await context.bot.send_message(
+            msg.chat_id,
+            "🔑 PIN accepted. Now send a voice message to complete authentication.",
+        )
     else:
         await db.log(
             telegram_user_id=user.id, telegram_username=user.username,
@@ -320,7 +322,7 @@ async def run() -> None:
     tts = TextToSpeech(config)
 
     cmd_handler = CommandHandler(config, sessions, pin, enrollment, db, notifier)
-    voice_handler = VoiceHandler(config, verifier, enrollment, sessions, replay, db, notifier, forwarder, tts)
+    voice_handler = VoiceHandler(config, verifier, enrollment, sessions, pin, replay, db, notifier, forwarder, tts)
     text_handler = TextHandler(config, sessions, forwarder, tts)
 
     dispatch = make_dispatcher(

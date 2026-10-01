@@ -146,14 +146,15 @@ class CommandHandler:
         text = (
             "*Voice Auth Middleware — Commands*\n\n"
             "*Always available:*\n"
-            "/pin — Authenticate with PIN (message deleted automatically)\n"
+            "/pin — Step 1: enter your PIN (message deleted automatically)\n"
             "/lock — End current session immediately\n"
             "/enroll — Enroll voiceprint (only if not yet enrolled)\n\n"
             "*Requires active session:*\n"
             "/status — Show system status\n"
             "/help — Show this message\n"
             "/auth\\_log — Show last 10 authentication attempts\n\n"
-            "_Send a voice message to authenticate with your voiceprint._"
+            "_Two factors open a session: /pin first, then a voice message with your "
+            "passphrase within 5 minutes._"
         )
         await update.message.reply_text(text, parse_mode="Markdown")
 
